@@ -21,9 +21,16 @@ class CodeSecurityScanner:
         'java': {'extensions': {'.java'}, 'tool': 'spotbugs'},
     }
 
-    def __init__(self, tool_paths: Optional[Dict[str, Optional[str]]] = None):
+    def __init__(
+        self,
+        tool_paths: Optional[Dict[str, Optional[str]]] = None,
+        language_tooling: Optional[Dict[str, Dict[str, Any]]] = None,
+        tool_timeout: int = TOOL_TIMEOUT,
+    ):
         self.vulnerabilities = []
         self.tool_paths = tool_paths or {}
+        self.language_tooling = language_tooling or self.LANGUAGE_TOOLING
+        self.tool_timeout = tool_timeout
         self.patterns = {
             'sql_injection': [
                 r'execute\s*\([^)]*%s',
@@ -107,7 +114,7 @@ class CodeSecurityScanner:
     
     def _language_from_extension(self, extension: str) -> Optional[str]:
         """Map file extension to supported language."""
-        for language, config in self.LANGUAGE_TOOLING.items():
+        for language, config in self.language_tooling.items():
             if extension in config['extensions']:
                 return language
         return None
@@ -115,7 +122,7 @@ class CodeSecurityScanner:
     def _resolve_tool_path(self, language: str, tool_name: Optional[str]) -> Optional[str]:
         """Resolve and validate executable path for a language tool."""
         override = self.tool_paths.get(language)
-        candidate = override or (shutil.which(tool_name) if tool_name else None)
+        candidate = override if override is not None else (shutil.which(tool_name) if tool_name else None)
         if not candidate:
             return None
         
@@ -147,7 +154,7 @@ class CodeSecurityScanner:
     
     def _run_language_tool(self, language: str, target_path: Path) -> Dict[str, Any]:
         """Execute language-specific open-source scanner."""
-        tool_name = self.LANGUAGE_TOOLING.get(language, {}).get('tool')
+        tool_name = self.language_tooling.get(language, {}).get('tool')
         tool_path = self._resolve_tool_path(language, tool_name)
         
         if language == 'java' and not self._has_java_bytecode(target_path):
@@ -260,7 +267,7 @@ class CodeSecurityScanner:
             capture_output=True,
             text=True,
             check=False,
-            timeout=self.TOOL_TIMEOUT,
+            timeout=self.tool_timeout,
             shell=False,
         )
         if completed.returncode not in self.ACCEPTABLE_TOOL_RETURNCODES:
@@ -293,7 +300,10 @@ class CodeSecurityScanner:
         scan_root = target_path if target_path.is_dir() else target_path.parent
         if not scan_root.exists():
             raise RuntimeError('Invalid Go scan target')
-        path_arg = './...' if scan_root.is_dir() else str(target_path)
+        if scan_root.is_dir():
+            path_arg = './...'
+        else:
+            path_arg = str(target_path.name)
         cmd = [
             tool_path,
             '-fmt=json',
@@ -305,7 +315,7 @@ class CodeSecurityScanner:
             capture_output=True,
             text=True,
             check=False,
-            timeout=self.TOOL_TIMEOUT,
+            timeout=self.tool_timeout,
             cwd=str(scan_root),
             shell=False,
         )
@@ -353,13 +363,16 @@ class CodeSecurityScanner:
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=self.TOOL_TIMEOUT,
+                timeout=self.tool_timeout,
                 shell=False,
             )
             if completed.returncode not in self.ACCEPTABLE_TOOL_RETURNCODES:
                 error_detail = completed.stderr.strip() or 'SpotBugs scan failed'
                 raise RuntimeError(f'{error_detail} (exit code {completed.returncode})')
-            xml_output = output_path.read_text(encoding='utf-8')
+            try:
+                xml_output = output_path.read_text(encoding='utf-8')
+            except OSError as exc:
+                raise RuntimeError(f'Unable to read SpotBugs output: {exc}') from exc
             if not xml_output.strip():
                 return []
             return self._parse_spotbugs_xml(xml_output)
