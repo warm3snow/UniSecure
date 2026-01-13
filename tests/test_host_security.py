@@ -34,13 +34,23 @@ class HostSecurityScannerTests(unittest.TestCase):
         self.assertEqual(open_ports["status"], "warning")
         self.assertIn("22/tcp", open_ports["details"])
 
-    def test_scan_warns_on_remote_target(self):
+    def test_scan_remote_target_runs_remote_checks(self):
         scanner = HostSecurityScanner(command_timeout=1)
-        results = scanner.scan(quick_mode=True, host="example.com")
+
+        with patch.object(scanner, "_probe_host", return_value=True), patch.object(
+            scanner, "_scan_remote_ports", return_value=["80/tcp"]
+        ):
+            results = scanner.scan(quick_mode=True, host="example.com")
+
+        self.assertEqual(results["hostname"], "example.com")
+        self.assertEqual(results["summary"]["total_checks"], 4)
 
         target_check = next(check for check in results["checks"] if check["check"] == "Target Host")
-        self.assertEqual(target_check["status"], "warning")
-        self.assertIn("Remote host scanning is not supported", target_check["message"])
+        self.assertEqual(target_check["status"], "passed")
+
+        open_ports = next(check for check in results["checks"] if check["check"] == "Open Ports")
+        self.assertEqual(open_ports["status"], "warning")
+        self.assertIn("80/tcp", open_ports["details"])
 
     def test_security_updates_detects_available_packages(self):
         scanner = HostSecurityScanner(command_timeout=1)

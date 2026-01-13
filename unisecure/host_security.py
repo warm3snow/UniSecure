@@ -4,6 +4,7 @@ import platform
 import pwd
 import re
 import shutil
+import socket
 import stat
 import subprocess
 from typing import Dict, Any, List, Optional
@@ -15,6 +16,7 @@ class HostSecurityScanner:
     DEFAULT_COMMAND_TIMEOUT = 5
     MAX_DISPLAYED_PORTS = 8
     GROUP_OTHER_WRITE_MASK = 0o022
+    COMMON_REMOTE_PORTS = (22, 80, 443, 3389, 3306, 5432, 8080, 8443)
 
     def __init__(self, command_timeout: int = DEFAULT_COMMAND_TIMEOUT):
         self.checks = [
@@ -32,16 +34,17 @@ class HostSecurityScanner:
         
         Args:
             quick_mode: If True, perform quick scan only
-            host: Target host to scan (local host only)
+            host: Target host to scan (local host supported by default)
             
         Returns:
             Dictionary containing scan results
         """
+        is_local = self._is_local_host(host)
         results = {
             'target': host,
-            'hostname': platform.node(),
-            'os': platform.system(),
-            'os_version': platform.version(),
+            'hostname': platform.node() if is_local else host,
+            'os': platform.system() if is_local else 'Unknown (remote host)',
+            'os_version': platform.version() if is_local else 'Unknown',
             'quick_mode': quick_mode,
             'checks': [],
             'summary': {
@@ -52,41 +55,50 @@ class HostSecurityScanner:
             }
         }
         
-        if host not in ('localhost', '127.0.0.1', '::1'):
+        if not is_local:
             results['summary']['total_checks'] += 1
-            self._record_check(
-                results,
-                {
-                    'check': 'Target Host',
-                    'status': 'warning',
-                    'details': f'Remote host "{host}" not supported; running local scan.',
-                    'message': 'Remote host scanning is not supported; defaulted to local system.',
-                },
-            )
+            self._check_target_host(results, host)
 
-        # Perform security checks (local host only)
-        self._check_os_version(results)
-        self._check_firewall(results)
-        self._check_open_ports(results)
-        
-        if not quick_mode:
-            self._check_user_accounts(results)
-            self._check_file_permissions(results)
-            self._check_security_updates(results)
+        if is_local:
+            self._check_os_version(results)
+            self._check_firewall(results)
+            self._check_open_ports(results)
+            
+            if not quick_mode:
+                self._check_user_accounts(results)
+                self._check_file_permissions(results)
+                self._check_security_updates(results)
+        else:
+            self._check_os_version(results, host=host, is_local=False)
+            self._check_firewall(results, host=host, is_local=False)
+            self._check_open_ports(results, host=host, is_local=False)
+            
+            if not quick_mode:
+                self._check_user_accounts(results, remote=True, host=host)
+                self._check_file_permissions(results, remote=True, host=host)
+                self._check_security_updates(results, remote=True, host=host)
         
         return results
     
-    def _check_os_version(self, results: Dict):
+    def _check_os_version(self, results: Dict, host: str = 'localhost', is_local: bool = True):
         """Check OS version."""
-        check = {
-            'check': 'Operating System',
-            'status': 'passed',
-            'details': f"{results['os']} - {results['os_version']}",
-            'message': 'Operating system identified',
-        }
+        if is_local:
+            check = {
+                'check': 'Operating System',
+                'status': 'passed',
+                'details': f"{results['os']} - {results['os_version']}",
+                'message': 'Operating system identified',
+            }
+        else:
+            check = {
+                'check': 'Operating System',
+                'status': 'warning',
+                'details': f'Remote OS for {host} could not be identified without agent access',
+                'message': 'Remote operating system could not be determined',
+            }
         self._record_check(results, check)
     
-    def _check_firewall(self, results: Dict):
+    def _check_firewall(self, results: Dict, host: str = 'localhost', is_local: bool = True):
         """Check firewall status."""
         check = {
             'check': 'Firewall Status',
@@ -95,6 +107,12 @@ class HostSecurityScanner:
             'message': 'Firewall status should be verified manually',
         }
         
+        if not is_local:
+            check['details'] = f'Remote firewall status for {host} could not be determined'
+            check['message'] = 'Verify firewall configuration on the remote host'
+            self._record_check(results, check)
+            return
+
         # Try to check firewall on different systems
         try:
             if results['os'] == 'Linux':
@@ -135,13 +153,13 @@ class HostSecurityScanner:
         
         self._record_check(results, check)
     
-    def _check_open_ports(self, results: Dict):
+    def _check_open_ports(self, results: Dict, host: str = 'localhost', is_local: bool = True):
         """Check for open ports."""
-        ports = self._collect_listening_ports()
+        ports = self._collect_listening_ports() if is_local else self._scan_remote_ports(host)
         status = 'warning' if ports else 'passed'
         message = f"Detected {len(ports)} listening services" if ports else 'No listening services detected'
 
-        displayed_ports = ', '.join(ports[: self.MAX_DISPLAYED_PORTS]) if ports else 'No open ports found using ss/netstat'
+        displayed_ports = ', '.join(ports[: self.MAX_DISPLAYED_PORTS]) if ports else 'No open ports detected'
         details = f"Listening ports: {displayed_ports}"
 
         check = {
@@ -152,8 +170,18 @@ class HostSecurityScanner:
         }
         self._record_check(results, check)
     
-    def _check_user_accounts(self, results: Dict):
+    def _check_user_accounts(self, results: Dict, remote: bool = False, host: str = 'localhost'):
         """Check user accounts configuration."""
+        if remote:
+            check = {
+                'check': 'User Accounts',
+                'status': 'warning',
+                'details': f'Remote account enumeration for {host} is not available',
+                'message': 'Review remote user accounts via SSH or configuration management',
+            }
+            self._record_check(results, check)
+            return
+
         try:
             users = pwd.getpwall()
         except Exception:
@@ -190,8 +218,18 @@ class HostSecurityScanner:
         }
         self._record_check(results, check)
     
-    def _check_file_permissions(self, results: Dict):
+    def _check_file_permissions(self, results: Dict, remote: bool = False, host: str = 'localhost'):
         """Check critical file permissions."""
+        if remote:
+            check = {
+                'check': 'File Permissions',
+                'status': 'warning',
+                'details': f'Permission checks for {host} require local access',
+                'message': 'Validate critical system file permissions on the remote host',
+            }
+            self._record_check(results, check)
+            return
+
         sensitive_files = {
             '/etc/passwd': 0o644,
             '/etc/shadow': 0o640,
@@ -231,7 +269,7 @@ class HostSecurityScanner:
         }
         self._record_check(results, check)
     
-    def _check_security_updates(self, results: Dict):
+    def _check_security_updates(self, results: Dict, remote: bool = False, host: str = 'localhost'):
         """Check for available security updates."""
         check = {
             'check': 'Security Updates',
@@ -239,6 +277,12 @@ class HostSecurityScanner:
             'details': 'Security update status',
             'message': 'Security updates should be checked and applied regularly',
         }
+
+        if remote:
+            check['details'] = f'Update status for {host} requires remote package manager access'
+            check['message'] = 'Validate security updates directly on the remote host'
+            self._record_check(results, check)
+            return
 
         if results.get('os') != 'Linux':
             self._record_check(results, check)
@@ -366,6 +410,20 @@ class HostSecurityScanner:
                 ports.add(f'{port}/{proto}')
         return sorted(ports)
 
+    def _scan_remote_ports(self, host: str) -> List[str]:
+        """Perform a lightweight TCP scan for common ports on a remote host."""
+        ports: List[str] = []
+        timeout = min(1.0, max(0.1, self.command_timeout / 5))
+        for port in self.COMMON_REMOTE_PORTS:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(timeout)
+                try:
+                    if sock.connect_ex((host, port)) == 0:
+                        ports.append(f'{port}/tcp')
+                except OSError:
+                    continue
+        return ports
+
     def _detect_package_manager(self) -> Optional[str]:
         """Detect available package manager."""
         for candidate in ('apt-get', 'dnf', 'yum'):
@@ -408,3 +466,35 @@ class HostSecurityScanner:
             results['summary']['warnings'] += 1
         elif status == 'failed':
             results['summary']['failed'] += 1
+
+    def _check_target_host(self, results: Dict[str, Any], host: str):
+        """Verify that the remote host appears reachable."""
+        reachable = self._probe_host(host)
+        check = {
+            'check': 'Target Host',
+            'status': 'passed' if reachable else 'failed',
+            'details': f'Host {host} resolved successfully' if reachable else f'Unable to reach {host}',
+            'message': 'Remote host appears reachable' if reachable else 'Remote host is unreachable',
+        }
+        self._record_check(results, check)
+
+    def _probe_host(self, host: str) -> bool:
+        """Lightweight reachability probe for remote hosts."""
+        try:
+            socket.gethostbyname(host)
+        except OSError:
+            return False
+
+        for port in (22, 443, 80):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(min(1.0, max(0.1, self.command_timeout / 5)))
+                try:
+                    if sock.connect_ex((host, port)) == 0:
+                        return True
+                except OSError:
+                    continue
+        return False
+
+    def _is_local_host(self, host: str) -> bool:
+        """Determine if the requested host represents the local machine."""
+        return host in ('localhost', '127.0.0.1', '::1')
