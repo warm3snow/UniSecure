@@ -342,10 +342,15 @@ class CodeSecurityScanner:
         for bug in root.findall('.//BugInstance'):
             source = bug.find('.//SourceLine')
             severity = self._spotbugs_priority_to_severity(bug.get('priority'))
+            source_path = None
+            source_line = None
+            if source is not None:
+                source_path = source.get('sourcepath') or source.get('sourcefile')
+                source_line = source.get('start')
             issues.append(
                 {
-                    'file': (source.get('sourcepath') if source is not None else None) or (source.get('sourcefile') if source is not None else 'unknown'),
-                    'line': int(source.get('start')) if source is not None and source.get('start') else None,
+                    'file': source_path or 'unknown',
+                    'line': int(source_line) if source_line else None,
                     'type': bug.get('type') or 'spotbugs_issue',
                     'severity': severity,
                     'description': (bug.findtext('LongMessage') or bug.findtext('ShortMessage') or 'SpotBugs finding'),
@@ -416,6 +421,5 @@ class CodeSecurityScanner:
     
     def save_report(self, results: Dict, output_path: str):
         """Save scan results to file."""
-        import json
         with open(output_path, 'w') as f:
             json.dump(results, f, indent=2)
