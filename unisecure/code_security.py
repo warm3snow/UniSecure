@@ -261,6 +261,7 @@ class CodeSecurityScanner:
             text=True,
             check=False,
             timeout=self.TOOL_TIMEOUT,
+            shell=False,
         )
         if completed.returncode not in self.ACCEPTABLE_TOOL_RETURNCODES:
             raise RuntimeError(completed.stderr.strip() or 'Bandit scan failed')
@@ -305,6 +306,7 @@ class CodeSecurityScanner:
             check=False,
             timeout=self.TOOL_TIMEOUT,
             cwd=str(scan_root),
+            shell=False,
         )
         if completed.returncode not in self.ACCEPTABLE_TOOL_RETURNCODES:
             raise RuntimeError(completed.stderr.strip() or 'Gosec scan failed')
@@ -343,23 +345,23 @@ class CodeSecurityScanner:
             '-quiet',
             str(target_path),
         ]
-        completed = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=self.TOOL_TIMEOUT,
-        )
-        if completed.returncode not in self.ACCEPTABLE_TOOL_RETURNCODES:
-            raise RuntimeError(completed.stderr.strip() or 'SpotBugs scan failed')
         try:
+            completed = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=self.TOOL_TIMEOUT,
+                shell=False,
+            )
+            if completed.returncode not in self.ACCEPTABLE_TOOL_RETURNCODES:
+                raise RuntimeError(completed.stderr.strip() or 'SpotBugs scan failed')
             xml_output = output_path.read_text(encoding='utf-8')
+            if not xml_output.strip():
+                return []
+            return self._parse_spotbugs_xml(xml_output)
         finally:
             output_path.unlink(missing_ok=True)
-        
-        if not xml_output.strip():
-            return []
-        return self._parse_spotbugs_xml(xml_output)
     
     def _parse_spotbugs_xml(self, xml_content: str) -> List[Dict[str, Any]]:
         """Parse SpotBugs XML output."""
@@ -377,10 +379,16 @@ class CodeSecurityScanner:
             if source is not None:
                 source_path = source.get('sourcepath') or source.get('sourcefile')
                 source_line = source.get('start')
+            line_number = None
+            if source_line:
+                try:
+                    line_number = int(source_line)
+                except (TypeError, ValueError):
+                    line_number = None
             issues.append(
                 {
                     'file': source_path or 'unknown',
-                    'line': int(source_line) if source_line else None,
+                    'line': line_number,
                     'type': bug.get('type') or 'spotbugs_issue',
                     'severity': severity,
                     'description': (bug.findtext('LongMessage') or bug.findtext('ShortMessage') or 'SpotBugs finding'),
