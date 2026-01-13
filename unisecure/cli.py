@@ -48,12 +48,13 @@ def scan_app(target, port):
 
 
 @main.command()
+@click.option('--host', default='localhost', show_default=True, help='Host to scan (local host only)')
 @click.option('--quick', is_flag=True, help='Quick scan mode')
-def scan_host(quick):
+def scan_host(host, quick):
     """Scan host system for security issues."""
-    click.echo("Scanning host system...")
+    click.echo(f"Scanning host system: {host} ...")
     scanner = HostSecurityScanner()
-    results = scanner.scan(quick_mode=quick)
+    results = scanner.scan(quick_mode=quick, host=host)
     scanner.print_report(results)
 
 
