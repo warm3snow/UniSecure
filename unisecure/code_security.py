@@ -264,7 +264,8 @@ class CodeSecurityScanner:
             shell=False,
         )
         if completed.returncode not in self.ACCEPTABLE_TOOL_RETURNCODES:
-            raise RuntimeError(completed.stderr.strip() or 'Bandit scan failed')
+            error_detail = completed.stderr.strip() or 'Bandit scan failed'
+            raise RuntimeError(f'{error_detail} (exit code {completed.returncode})')
         if not completed.stdout.strip():
             return []
         
@@ -309,7 +310,8 @@ class CodeSecurityScanner:
             shell=False,
         )
         if completed.returncode not in self.ACCEPTABLE_TOOL_RETURNCODES:
-            raise RuntimeError(completed.stderr.strip() or 'Gosec scan failed')
+            error_detail = completed.stderr.strip() or 'Gosec scan failed'
+            raise RuntimeError(f'{error_detail} (exit code {completed.returncode})')
         if not completed.stdout.strip():
             return []
         
@@ -355,7 +357,8 @@ class CodeSecurityScanner:
                 shell=False,
             )
             if completed.returncode not in self.ACCEPTABLE_TOOL_RETURNCODES:
-                raise RuntimeError(completed.stderr.strip() or 'SpotBugs scan failed')
+                error_detail = completed.stderr.strip() or 'SpotBugs scan failed'
+                raise RuntimeError(f'{error_detail} (exit code {completed.returncode})')
             xml_output = output_path.read_text(encoding='utf-8')
             if not xml_output.strip():
                 return []
@@ -459,5 +462,5 @@ class CodeSecurityScanner:
     
     def save_report(self, results: Dict, output_path: str):
         """Save scan results to file."""
-        with open(output_path, 'w') as f:
+        with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2)
