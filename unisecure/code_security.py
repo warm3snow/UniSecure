@@ -109,8 +109,10 @@ class CodeSecurityScanner:
     
     def _is_code_file(self, filename: str) -> bool:
         """Check if file is a code file."""
-        code_extensions = {'.py', '.js', '.java', '.cpp', '.c', '.go', '.rb', '.php', '.cs', '.ts', '.jsx', '.tsx'}
-        return any(filename.endswith(ext) for ext in code_extensions)
+        extension = Path(filename).suffix
+        language_extensions = {ext for config in self.language_tooling.values() for ext in config['extensions']}
+        generic_extensions = {'.js', '.cpp', '.c', '.rb', '.php', '.cs', '.ts', '.jsx', '.tsx'}
+        return extension in language_extensions or extension in generic_extensions
     
     def _language_from_extension(self, extension: str) -> Optional[str]:
         """Map file extension to supported language."""
@@ -262,6 +264,7 @@ class CodeSecurityScanner:
             'json',
             '-q',
         ]
+        command_display = ' '.join(cmd)
         completed = subprocess.run(
             cmd,
             capture_output=True,
@@ -272,7 +275,7 @@ class CodeSecurityScanner:
         )
         if completed.returncode not in self.ACCEPTABLE_TOOL_RETURNCODES:
             error_detail = completed.stderr.strip() or 'Bandit scan failed'
-            raise RuntimeError(f'{error_detail} (exit code {completed.returncode})')
+            raise RuntimeError(f'{error_detail} (exit code {completed.returncode}) while running: {command_display}')
         if not completed.stdout.strip():
             return []
         
@@ -299,7 +302,7 @@ class CodeSecurityScanner:
         """Run Gosec for Golang security scanning."""
         scan_root = target_path if target_path.is_dir() else target_path.parent
         if not scan_root.exists():
-            raise RuntimeError('Invalid Go scan target')
+            raise RuntimeError(f'Invalid Go scan target: {scan_root}')
         path_arg = './...'
         cmd = [
             tool_path,
@@ -307,6 +310,7 @@ class CodeSecurityScanner:
             '-quiet',
             path_arg,
         ]
+        command_display = ' '.join(cmd)
         completed = subprocess.run(
             cmd,
             capture_output=True,
@@ -318,7 +322,7 @@ class CodeSecurityScanner:
         )
         if completed.returncode not in self.ACCEPTABLE_TOOL_RETURNCODES:
             error_detail = completed.stderr.strip() or 'Gosec scan failed'
-            raise RuntimeError(f'{error_detail} (exit code {completed.returncode})')
+            raise RuntimeError(f'{error_detail} (exit code {completed.returncode}) while running: {command_display}')
         if not completed.stdout.strip():
             return []
         
@@ -354,6 +358,7 @@ class CodeSecurityScanner:
             '-quiet',
             str(target_path),
         ]
+        command_display = ' '.join(cmd)
         try:
             completed = subprocess.run(
                 cmd,
@@ -365,7 +370,7 @@ class CodeSecurityScanner:
             )
             if completed.returncode not in self.ACCEPTABLE_TOOL_RETURNCODES:
                 error_detail = completed.stderr.strip() or 'SpotBugs scan failed'
-                raise RuntimeError(f'{error_detail} (exit code {completed.returncode})')
+                raise RuntimeError(f'{error_detail} (exit code {completed.returncode}) while running: {command_display}')
             try:
                 xml_output = output_path.read_text(encoding='utf-8')
             except (OSError, UnicodeDecodeError) as exc:
@@ -417,7 +422,7 @@ class CodeSecurityScanner:
             '2': 'medium',
             '3': 'low',
         }
-        return mapping.get(priority or '', 'medium')
+        return mapping.get(priority or '', 'low')
     
     def _get_severity(self, vuln_type: str) -> str:
         """Get severity level for vulnerability type."""
