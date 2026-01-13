@@ -300,10 +300,7 @@ class CodeSecurityScanner:
         scan_root = target_path if target_path.is_dir() else target_path.parent
         if not scan_root.exists():
             raise RuntimeError('Invalid Go scan target')
-        if scan_root.is_dir():
-            path_arg = './...'
-        else:
-            path_arg = str(target_path.name)
+        path_arg = './...'
         cmd = [
             tool_path,
             '-fmt=json',
@@ -371,7 +368,7 @@ class CodeSecurityScanner:
                 raise RuntimeError(f'{error_detail} (exit code {completed.returncode})')
             try:
                 xml_output = output_path.read_text(encoding='utf-8')
-            except OSError as exc:
+            except (OSError, UnicodeDecodeError) as exc:
                 raise RuntimeError(f'Unable to read SpotBugs output: {exc}') from exc
             if not xml_output.strip():
                 return []
