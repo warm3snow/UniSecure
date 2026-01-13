@@ -45,7 +45,7 @@ class HostSecurityScannerTests(unittest.TestCase):
         }
 
         def mock_run(command, **_):
-            if command[:3] == ["apt-get", "-s", "upgrade"]:
+            if command == ["apt-get", "-s", "upgrade"]:
                 return CompletedProcess(command, 0, "2 upgraded, 0 newly installed, 0 to remove.\n", "")
             return CompletedProcess(command, 1, "", "")
 

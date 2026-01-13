@@ -14,6 +14,7 @@ class HostSecurityScanner:
 
     DEFAULT_COMMAND_TIMEOUT = 5
     MAX_DISPLAYED_PORTS = 8
+    GROUP_OTHER_WRITE_MASK = 0o022
 
     def __init__(self, command_timeout: int = DEFAULT_COMMAND_TIMEOUT):
         self.checks = [
@@ -191,10 +192,18 @@ class HostSecurityScanner:
             except OSError:
                 continue
 
-            if mode & 0o022:
-                issues.append(f'{path} permissions too permissive ({oct(mode)})')
-            elif mode > expected_mode:
-                issues.append(f'{path} permissions exceed recommended {oct(expected_mode)} (found {oct(mode)})')
+            perms = mode & 0o777
+            allowed_bits = expected_mode & 0o777
+            extra_bits = perms & ~allowed_bits
+
+            # Flag files that allow group/other write permissions
+            if perms & self.GROUP_OTHER_WRITE_MASK:
+                issues.append(f'{path} permissions too permissive ({oct(perms)})')
+
+            # Identify any permission bits beyond the expected baseline
+            other_excess = extra_bits & ~self.GROUP_OTHER_WRITE_MASK
+            if other_excess:
+                issues.append(f'{path} permissions exceed recommended {oct(expected_mode)} (found {oct(perms)})')
 
         status = 'warning' if issues else 'passed'
         details = '; '.join(issues) if issues else 'Core system file permissions appear hardened'
@@ -222,6 +231,7 @@ class HostSecurityScanner:
             return
 
         package_manager = self._detect_package_manager()
+        manager_label = package_manager or 'package manager'
         if not package_manager:
             check['message'] = 'No supported package manager detected'
             check['details'] = 'Install and configure package management for regular updates'
@@ -236,30 +246,39 @@ class HostSecurityScanner:
                     check['status'] = 'passed'
                     check['message'] = 'System packages are up to date'
                     check['details'] = 'APT reports no pending upgrades'
-                else:
+                elif updates > 0:
                     check['status'] = 'warning'
                     check['message'] = f'{updates} package upgrades available via APT'
                     check['details'] = 'Run apt-get update && apt-get upgrade to apply patches'
+                else:
+                    check['status'] = 'warning'
+                    check['message'] = 'Unable to determine updates via APT'
+                    check['details'] = 'APT returned non-zero status; rerun update check manually'
             elif package_manager in ('yum', 'dnf'):
                 completed = self._run_command([package_manager, '-q', 'check-update'])
                 if completed.returncode == 100:
                     check['status'] = 'warning'
                     check['message'] = 'Package updates available'
-                    check['details'] = f'{package_manager} reports pending updates'
+                    check['details'] = (
+                        f'{manager_label} reports pending updates (command may contact remote repositories)'
+                    )
                 elif completed.returncode == 0:
                     check['status'] = 'passed'
                     check['message'] = 'System packages are up to date'
-                    check['details'] = f'{package_manager} did not report pending updates'
+                    check['details'] = (
+                        f'{manager_label} did not report pending updates (may require network access)'
+                    )
                 else:
                     check['status'] = 'warning'
-                    check['message'] = f'Unable to determine updates via {package_manager}'
+                    check['message'] = f'Unable to determine updates via {manager_label}'
         except subprocess.TimeoutExpired:
             check['status'] = 'warning'
             check['message'] = 'Package manager check timed out'
-            check['details'] = f'{package_manager} did not respond within timeout'
+            check['details'] = f'{manager_label} did not respond within timeout'
         except OSError as exc:
             check['status'] = 'warning'
-            check['message'] = f'Failed to run {package_manager}: {exc}'
+            check['message'] = f'Failed to run {manager_label}'
+            check['details'] = f'{manager_label} error: {exc}'
 
         self._record_check(results, check)
     
@@ -316,7 +335,11 @@ class HostSecurityScanner:
             if not parts:
                 continue
             protocol = parts[0].lower()
-            if not protocol.startswith(('tcp', 'udp')):
+            if protocol.startswith('udp'):
+                proto = 'udp'
+            elif protocol.startswith('tcp'):
+                proto = 'tcp'
+            else:
                 continue
             port: Optional[str] = None
             for token in reversed(parts):
@@ -326,7 +349,6 @@ class HostSecurityScanner:
                         port = candidate
                         break
             if port:
-                proto = 'udp' if 'udp' in protocol else 'tcp'
                 ports.add(f'{port}/{proto}')
         return sorted(ports)
 
