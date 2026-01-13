@@ -90,12 +90,21 @@ class HostSecurityScanner:
                 'message': 'Operating system identified',
             }
         else:
-            check = {
-                'check': 'Operating System',
-                'status': 'warning',
-                'details': f'Remote OS for {host} could not be identified without agent access',
-                'message': 'Remote operating system could not be determined',
-            }
+            remote_guess = self._guess_remote_os(host)
+            if remote_guess:
+                check = {
+                    'check': 'Operating System',
+                    'status': 'passed',
+                    'details': remote_guess,
+                    'message': 'Remote OS fingerprint collected',
+                }
+            else:
+                check = {
+                    'check': 'Operating System',
+                    'status': 'warning',
+                    'details': f'Remote OS for {host} could not be identified without agent access',
+                    'message': 'Remote operating system could not be determined',
+                }
         self._record_check(results, check)
     
     def _check_firewall(self, results: Dict, host: str = 'localhost', is_local: bool = True):
@@ -159,7 +168,9 @@ class HostSecurityScanner:
         status = 'warning' if ports else 'passed'
         message = f"Detected {len(ports)} listening services" if ports else 'No listening services detected'
 
-        displayed_ports = ', '.join(ports[: self.MAX_DISPLAYED_PORTS]) if ports else 'No open ports detected'
+        displayed_ports = (
+            ', '.join(ports[: self.MAX_DISPLAYED_PORTS]) if ports else 'No open ports detected on common ports'
+        )
         details = f"Listening ports: {displayed_ports}"
 
         check = {
@@ -362,6 +373,8 @@ class HostSecurityScanner:
             }.get(check['status'], '?')
             print(f"  {status_symbol} {check['check']}")
             print(f"     {check['message']}")
+            if check.get('details'):
+                print(f"     Details: {check['details']}")
 
     def _collect_listening_ports(self) -> List[str]:
         """Collect listening TCP/UDP ports using common open-source tools."""
@@ -419,10 +432,43 @@ class HostSecurityScanner:
                 sock.settimeout(timeout)
                 try:
                     if sock.connect_ex((host, port)) == 0:
-                        ports.append(f'{port}/tcp')
+                        ports.append(self._format_port(port))
                 except OSError:
                     continue
         return ports
+
+    def _format_port(self, port: int) -> str:
+        """Return a descriptive port string including service name if available."""
+        try:
+            service = socket.getservbyport(port, 'tcp')
+        except OSError:
+            service = None
+        return f"{port}/tcp" + (f" ({service})" if service else "")
+
+    def _guess_remote_os(self, host: str) -> Optional[str]:
+        """Attempt basic remote OS fingerprinting using ping TTL heuristic."""
+        if not self._command_exists('ping'):
+            return None
+
+        try:
+            completed = self._run_command(['ping', '-c', '1', '-W', str(max(1, self.command_timeout)), host])
+        except subprocess.TimeoutExpired:
+            return None
+        if completed.returncode != 0 or not completed.stdout:
+            return None
+
+        match = re.search(r'ttl[=|:](\d+)', completed.stdout, re.IGNORECASE)
+        if not match:
+            return None
+
+        ttl = int(match.group(1))
+        if ttl >= 200:
+            return f'Network device or BSD-like (TTL {ttl})'
+        if ttl >= 128:
+            return f'Windows-like (TTL {ttl})'
+        if ttl >= 64:
+            return f'Linux/Unix-like (TTL {ttl})'
+        return f'Unknown OS (TTL {ttl})'
 
     def _detect_package_manager(self) -> Optional[str]:
         """Detect available package manager."""
