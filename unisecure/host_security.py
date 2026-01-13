@@ -27,16 +27,18 @@ class HostSecurityScanner:
         ]
         self.command_timeout = command_timeout
     
-    def scan(self, quick_mode: bool = False) -> Dict[str, Any]:
+    def scan(self, quick_mode: bool = False, host: str = 'localhost') -> Dict[str, Any]:
         """Scan host system for security issues.
         
         Args:
             quick_mode: If True, perform quick scan only
+            host: Target host to scan (local host only)
             
         Returns:
             Dictionary containing scan results
         """
         results = {
+            'target': host,
             'hostname': platform.node(),
             'os': platform.system(),
             'os_version': platform.version(),
@@ -50,7 +52,19 @@ class HostSecurityScanner:
             }
         }
         
-        # Perform security checks
+        if host not in ('localhost', '127.0.0.1', '::1'):
+            results['summary']['total_checks'] += 1
+            self._record_check(
+                results,
+                {
+                    'check': 'Target Host',
+                    'status': 'warning',
+                    'details': f'Remote host "{host}" not supported; running local scan.',
+                    'message': 'Remote host scanning is not supported; defaulted to local system.',
+                },
+            )
+
+        # Perform security checks (local host only)
         self._check_os_version(results)
         self._check_firewall(results)
         self._check_open_ports(results)

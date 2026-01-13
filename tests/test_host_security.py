@@ -23,15 +23,24 @@ class HostSecurityScannerTests(unittest.TestCase):
         with patch.object(scanner, "_run_command", side_effect=mock_run), patch.object(
             scanner, "_command_exists", side_effect=lambda name: name in {"ufw", "ss"}
         ):
-            results = scanner.scan(quick_mode=True)
+            results = scanner.scan(quick_mode=True, host="localhost")
 
         self.assertEqual(results["summary"]["total_checks"], 3)
+        self.assertEqual(results["target"], "localhost")
         firewall = next(check for check in results["checks"] if check["check"] == "Firewall Status")
         self.assertEqual(firewall["status"], "passed")
 
         open_ports = next(check for check in results["checks"] if check["check"] == "Open Ports")
         self.assertEqual(open_ports["status"], "warning")
         self.assertIn("22/tcp", open_ports["details"])
+
+    def test_scan_warns_on_remote_target(self):
+        scanner = HostSecurityScanner(command_timeout=1)
+        results = scanner.scan(quick_mode=True, host="example.com")
+
+        target_check = next(check for check in results["checks"] if check["check"] == "Target Host")
+        self.assertEqual(target_check["status"], "warning")
+        self.assertIn("Remote host scanning is not supported", target_check["message"])
 
     def test_security_updates_detects_available_packages(self):
         scanner = HostSecurityScanner(command_timeout=1)
