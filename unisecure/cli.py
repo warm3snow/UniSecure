@@ -60,12 +60,19 @@ def scan_host(quick):
 @main.command()
 @click.argument('image')
 @click.option('--registry', help='Container registry URL')
-def scan_container(image, registry):
+@click.option('--output', '-o', help='Output file for container scan report')
+@click.option('--use-trivy', is_flag=True, help='Use Trivy CLI for live vulnerability scanning')
+def scan_container(image, registry, output, use_trivy):
     """Scan container image for vulnerabilities."""
     click.echo(f"Scanning container image: {image}")
-    scanner = ContainerSecurityScanner()
+    scanner = ContainerSecurityScanner(use_mock_data=not use_trivy)
     results = scanner.scan(image, registry=registry)
-    scanner.print_report(results)
+    
+    if output:
+        scanner.save_report(results, output)
+        click.echo(f"Report saved to: {output}")
+    else:
+        scanner.print_report(results)
 
 
 @main.command()

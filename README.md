@@ -42,6 +42,8 @@ UniSecure provides comprehensive security scanning and analysis across four crit
 - Secret exposure detection
 - User permission validation
 
+> Container image vulnerability scanning leverages the Trivy CLI. Ensure `trivy` is installed and available in your PATH for real image scans.
+
 ## Installation
 
 ```bash
@@ -89,6 +91,12 @@ unisecure scan-container nginx:latest
 
 # Scan container from specific registry
 unisecure scan-container myapp:1.0 --registry registry.example.com
+
+# Save container scan report (JSON)
+unisecure scan-container nginx:latest --output container-report.json
+
+# Run a real vulnerability scan via Trivy (requires Trivy installed)
+unisecure scan-container nginx:latest --use-trivy --output container-report.json
 
 # Run comprehensive scan (all security checks)
 unisecure scan-all /path/to/project
