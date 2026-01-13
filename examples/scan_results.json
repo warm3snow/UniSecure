@@ -1,0 +1,38 @@
+{
+  "path": "vulnerable_code.py",
+  "issues": [
+    {
+      "file": "vulnerable_code.py",
+      "line": 27,
+      "type": "hardcoded_credentials",
+      "severity": "medium",
+      "description": "Hardcoded credentials detected",
+      "code": "password = \"MySecretPassword123\""
+    },
+    {
+      "file": "vulnerable_code.py",
+      "line": 26,
+      "type": "hardcoded_credentials",
+      "severity": "medium",
+      "description": "Hardcoded credentials detected",
+      "code": "api_key = \"sk_live_abcdef123456789\""
+    },
+    {
+      "file": "vulnerable_code.py",
+      "line": 39,
+      "type": "command_injection",
+      "severity": "high",
+      "description": "Potential command injection vulnerability",
+      "code": "os.system(f\"cat {filename}\")"
+    }
+  ],
+  "summary": {
+    "total_files": 0,
+    "total_issues": 3,
+    "severity_counts": {
+      "high": 1,
+      "medium": 2,
+      "low": 0
+    }
+  }
+}
