@@ -485,7 +485,7 @@ class HostSecurityScanner:
         except OSError:
             return False
 
-        for port in (443, 80):
+        for port in (22, 443, 80):
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.settimeout(min(1.0, max(0.1, self.command_timeout / 5)))
                 try:
@@ -493,7 +493,7 @@ class HostSecurityScanner:
                         return True
                 except OSError:
                     continue
-        return True
+        return False
 
     def _is_local_host(self, host: str) -> bool:
         """Determine if the requested host represents the local machine."""
