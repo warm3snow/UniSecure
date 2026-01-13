@@ -1,18 +1,23 @@
 """Container security scanner module."""
-from typing import Dict, Any, Optional
+import json
+import shutil
+import subprocess
+from typing import Dict, Any, Optional, Tuple, List
 
 
 class ContainerSecurityScanner:
     """Scanner for container security vulnerabilities."""
     
-    def __init__(self, use_mock_data: bool = True):
+    def __init__(self, use_mock_data: bool = False, trivy_path: Optional[str] = None):
         """Initialize container security scanner.
         
         Args:
             use_mock_data: If True, use mock vulnerability data for demonstration.
-                          Set to False in production environments.
+                           Set to False in production environments.
+            trivy_path: Optional path to trivy executable. Defaults to discovery on PATH.
         """
         self.use_mock_data = use_mock_data
+        self.trivy_path = trivy_path or shutil.which("trivy")
         self.checks = [
             'base_image',
             'vulnerabilities',
@@ -71,38 +76,95 @@ class ContainerSecurityScanner:
         results['summary']['passed'] += 1
     
     def _check_vulnerabilities(self, image: str, results: Dict):
-        """Check for known vulnerabilities."""
-        vulnerabilities = []
+        """Check for known vulnerabilities using Trivy (mainstream scanner)."""
+        vulnerabilities: List[Dict[str, Any]] = []
+        source = 'mock data'
+        status = 'passed'
+        message = 'No vulnerabilities detected'
+        details = 'Container image may have known vulnerabilities'
         
-        # In production, this would connect to vulnerability databases
-        # For demonstration, use mock data if enabled
-        if self.use_mock_data:
-            vulnerabilities = [
-                {
-                    'cve': 'CVE-2024-0001',
-                    'severity': 'medium',
-                    'package': 'example-lib',
-                    'version': '1.2.3',
-                    'fixed_in': '1.2.4',
-                }
-            ]
+        try:
+            vulnerabilities, source = self._fetch_vulnerabilities(image)
+            status = 'warning' if vulnerabilities else 'passed'
+            message = f'Found {len(vulnerabilities)} vulnerabilities using {source}'
+            details = f'Vulnerability scan source: {source}'
+        except RuntimeError as exc:
+            status = 'failed'
+            message = f'Failed to run vulnerability scan: {exc}'
+            details = 'Ensure Trivy CLI is installed and accessible on PATH.'
         
         check = {
             'check': 'Vulnerability Scan',
-            'status': 'warning' if vulnerabilities else 'passed',
-            'message': f'Found {len(vulnerabilities)} vulnerabilities',
-            'details': 'Container image may have known vulnerabilities',
+            'status': status,
+            'message': message,
+            'details': details,
         }
         results['checks'].append(check)
         results['vulnerabilities'].extend(vulnerabilities)
         
-        for vuln in vulnerabilities:
-            results['summary']['vulnerabilities'][vuln['severity']] += 1
+        self._update_summary(status, results, vulnerabilities)
+    
+    def _fetch_vulnerabilities(self, image: str) -> Tuple[List[Dict[str, Any]], str]:
+        """Run Trivy to fetch vulnerabilities or return mock data."""
+        if self.use_mock_data:
+            return self._mock_vulnerabilities(), 'mock data'
         
-        if vulnerabilities:
-            results['summary']['warnings'] += 1
-        else:
-            results['summary']['passed'] += 1
+        if not self.trivy_path:
+            raise RuntimeError('Trivy CLI not found')
+        
+        cmd = [
+            self.trivy_path,
+            'image',
+            '--security-checks',
+            'vuln',
+            '--format',
+            'json',
+            '--quiet',
+            image,
+        ]
+        completed = subprocess.run(
+            cmd, capture_output=True, text=True, check=False
+        )
+        
+        if completed.returncode != 0:
+            error_msg = completed.stderr.strip() or 'Trivy scan failed'
+            raise RuntimeError(error_msg)
+        
+        try:
+            scan_output = json.loads(completed.stdout or "{}")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f'Unable to parse Trivy output: {exc}') from exc
+        
+        return self._parse_trivy_results(scan_output), 'Trivy'
+    
+    def _parse_trivy_results(self, scan_output: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract vulnerability information from Trivy JSON output."""
+        vulnerabilities: List[Dict[str, Any]] = []
+        for result in scan_output.get('Results', []):
+            for vuln in result.get('Vulnerabilities', []) or []:
+                vulnerabilities.append(
+                    {
+                        'cve': vuln.get('VulnerabilityID'),
+                        'severity': (vuln.get('Severity') or '').lower(),
+                        'package': vuln.get('PkgName'),
+                        'version': vuln.get('InstalledVersion'),
+                        'fixed_in': vuln.get('FixedVersion') or 'N/A',
+                        'title': vuln.get('Title'),
+                    }
+                )
+        return vulnerabilities
+    
+    def _mock_vulnerabilities(self) -> List[Dict[str, Any]]:
+        """Provide mock vulnerability data for demo/testing."""
+        return [
+            {
+                'cve': 'CVE-2024-0001',
+                'severity': 'medium',
+                'package': 'example-lib',
+                'version': '1.2.3',
+                'fixed_in': '1.2.4',
+            }
+        ]
     
     def _check_configuration(self, image: str, results: Dict):
         """Check container configuration."""
@@ -137,6 +199,20 @@ class ContainerSecurityScanner:
         results['checks'].append(check)
         results['summary']['warnings'] += 1
     
+    def _update_summary(self, status: str, results: Dict[str, Any], vulnerabilities: List[Dict[str, Any]]):
+        """Update summary statistics."""
+        if status == 'passed':
+            results['summary']['passed'] += 1
+        elif status == 'warning':
+            results['summary']['warnings'] += 1
+        elif status == 'failed':
+            results['summary']['failed'] += 1
+        
+        for vuln in vulnerabilities:
+            severity = (vuln.get('severity') or '').lower()
+            if severity in results['summary']['vulnerabilities']:
+                results['summary']['vulnerabilities'][severity] += 1
+    
     def print_report(self, results: Dict):
         """Print scan results to console."""
         print(f"\nContainer Security Scan Results")
@@ -161,9 +237,9 @@ class ContainerSecurityScanner:
             if results['vulnerabilities']:
                 print(f"\nVulnerability Details:")
                 for vuln in results['vulnerabilities'][:5]:  # Show first 5
-                    print(f"  • {vuln['cve']} [{vuln['severity'].upper()}]")
-                    print(f"    Package: {vuln['package']} {vuln['version']}")
-                    print(f"    Fixed in: {vuln['fixed_in']}")
+                    print(f"  • {vuln.get('cve')} [{(vuln.get('severity') or '').upper()}]")
+                    print(f"    Package: {vuln.get('package')} {vuln.get('version')}")
+                    print(f"    Fixed in: {vuln.get('fixed_in')}")
         
         print(f"\nCheck Details:")
         for check in results['checks']:
@@ -173,3 +249,8 @@ class ContainerSecurityScanner:
                 'failed': '✗',
             }.get(check['status'], '?')
             print(f"  {status_symbol} {check['check']}: {check['message']}")
+    
+    def save_report(self, results: Dict, output_path: str):
+        """Save scan results to file."""
+        with open(output_path, 'w') as f:
+            json.dump(results, f, indent=2)

@@ -60,12 +60,18 @@ def scan_host(quick):
 @main.command()
 @click.argument('image')
 @click.option('--registry', help='Container registry URL')
-def scan_container(image, registry):
+@click.option('--output', '-o', help='Output file for container scan report')
+def scan_container(image, registry, output):
     """Scan container image for vulnerabilities."""
     click.echo(f"Scanning container image: {image}")
     scanner = ContainerSecurityScanner()
     results = scanner.scan(image, registry=registry)
-    scanner.print_report(results)
+    
+    if output:
+        scanner.save_report(results, output)
+        click.echo(f"Report saved to: {output}")
+    else:
+        scanner.print_report(results)
 
 
 @main.command()
