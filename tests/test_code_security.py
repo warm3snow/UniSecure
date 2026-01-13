@@ -26,7 +26,8 @@ class CodeSecurityScannerTests(unittest.TestCase):
             self.assertGreaterEqual(results["summary"]["total_files"], 3)
             self.assertTrue(results["tools"])
 
-            python_tool = next(tool for tool in results["tools"] if tool["language"] == "python")
+            python_tool = next((tool for tool in results["tools"] if tool["language"] == "python"), None)
+            self.assertIsNotNone(python_tool)
             self.assertEqual(python_tool["status"], "skipped")
             self.assertGreater(results["summary"]["total_issues"], 0)
             self.assertTrue(any(issue["type"] == "command_injection" for issue in results["issues"]))

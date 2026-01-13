@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 from xml.etree import ElementTree
@@ -13,6 +14,7 @@ class CodeSecurityScanner:
     """Scanner for code security vulnerabilities."""
 
     TOOL_TIMEOUT = 300
+    ACCEPTABLE_TOOL_RETURNCODES = (0, 1)
     LANGUAGE_TOOLING = {
         'python': {'extensions': {'.py'}, 'tool': 'bandit'},
         'go': {'extensions': {'.go'}, 'tool': 'gosec'},
@@ -110,6 +112,21 @@ class CodeSecurityScanner:
                 return language
         return None
     
+    def _resolve_tool_path(self, language: str, tool_name: Optional[str]) -> Optional[str]:
+        """Resolve and validate executable path for a language tool."""
+        override = self.tool_paths.get(language)
+        candidate = override or (shutil.which(tool_name) if tool_name else None)
+        if not candidate:
+            return None
+        
+        resolved = Path(candidate).expanduser()
+        if not resolved.is_absolute():
+            resolved = Path.cwd() / resolved
+        
+        if resolved.is_file() and os.access(resolved, os.X_OK):
+            return str(resolved)
+        return None
+    
     def _run_language_tools(self, path_obj: Path, languages: Set[str], results: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Run external open-source scanners for detected languages."""
         if not languages:
@@ -131,7 +148,7 @@ class CodeSecurityScanner:
     def _run_language_tool(self, language: str, target_path: Path) -> Dict[str, Any]:
         """Execute language-specific open-source scanner."""
         tool_name = self.LANGUAGE_TOOLING.get(language, {}).get('tool')
-        tool_path = self.tool_paths.get(language) or (shutil.which(tool_name) if tool_name else None)
+        tool_path = self._resolve_tool_path(language, tool_name)
         
         if language == 'java' and not self._has_java_bytecode(target_path):
             return {
@@ -245,7 +262,7 @@ class CodeSecurityScanner:
             check=False,
             timeout=self.TOOL_TIMEOUT,
         )
-        if completed.returncode not in (0, 1):
+        if completed.returncode not in self.ACCEPTABLE_TOOL_RETURNCODES:
             raise RuntimeError(completed.stderr.strip() or 'Bandit scan failed')
         if not completed.stdout.strip():
             return []
@@ -271,11 +288,15 @@ class CodeSecurityScanner:
     
     def _run_go_tool(self, target_path: Path, tool_path: str) -> List[Dict[str, Any]]:
         """Run Gosec for Golang security scanning."""
+        scan_root = target_path if target_path.is_dir() else target_path.parent
+        if not scan_root.exists():
+            raise RuntimeError('Invalid Go scan target')
+        path_arg = './...' if scan_root.is_dir() else str(target_path)
         cmd = [
             tool_path,
             '-fmt=json',
             '-quiet',
-            str(target_path),
+            path_arg,
         ]
         completed = subprocess.run(
             cmd,
@@ -283,9 +304,9 @@ class CodeSecurityScanner:
             text=True,
             check=False,
             timeout=self.TOOL_TIMEOUT,
-            cwd=str(target_path if target_path.is_dir() else target_path.parent),
+            cwd=str(scan_root),
         )
-        if completed.returncode not in (0, 1):
+        if completed.returncode not in self.ACCEPTABLE_TOOL_RETURNCODES:
             raise RuntimeError(completed.stderr.strip() or 'Gosec scan failed')
         if not completed.stdout.strip():
             return []
@@ -311,10 +332,14 @@ class CodeSecurityScanner:
     
     def _run_java_tool(self, target_path: Path, tool_path: str) -> List[Dict[str, Any]]:
         """Run SpotBugs for Java security scanning."""
+        with tempfile.NamedTemporaryFile(suffix='.xml', delete=False) as tmp_file:
+            output_path = Path(tmp_file.name)
         cmd = [
             tool_path,
             '-textui',
             '-xml:withMessages',
+            '-output',
+            str(output_path),
             '-quiet',
             str(target_path),
         ]
@@ -325,11 +350,16 @@ class CodeSecurityScanner:
             check=False,
             timeout=self.TOOL_TIMEOUT,
         )
-        if completed.returncode not in (0, 1):
+        if completed.returncode not in self.ACCEPTABLE_TOOL_RETURNCODES:
             raise RuntimeError(completed.stderr.strip() or 'SpotBugs scan failed')
-        if not completed.stdout.strip():
+        try:
+            xml_output = output_path.read_text(encoding='utf-8')
+        finally:
+            output_path.unlink(missing_ok=True)
+        
+        if not xml_output.strip():
             return []
-        return self._parse_spotbugs_xml(completed.stdout)
+        return self._parse_spotbugs_xml(xml_output)
     
     def _parse_spotbugs_xml(self, xml_content: str) -> List[Dict[str, Any]]:
         """Parse SpotBugs XML output."""
