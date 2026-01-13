@@ -19,6 +19,12 @@ UniSecure provides comprehensive security scanning and analysis across four crit
 - Finds command injection risks
 - Detects path traversal vulnerabilities
 - Supports multiple programming languages (Python, JavaScript, Java, C++, Go, Ruby, PHP, C#, TypeScript)
+- Integrates with popular open-source scanners for deep analysis:
+  - Python: [Bandit](https://github.com/PyCQA/bandit)
+  - Golang: [Gosec](https://github.com/securego/gosec)
+  - Java: [SpotBugs](https://github.com/spotbugs/spotbugs)
+  
+> Install the corresponding CLI tools and ensure they are on your PATH to enable language-specific scanning. JSON reports can be written with `--output` to capture findings.
 
 ### Application Security Scanner
 - SSL/TLS configuration validation
