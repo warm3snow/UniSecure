@@ -8,7 +8,11 @@ from typing import Dict, Any, Optional, Tuple, List
 class ContainerSecurityScanner:
     """Scanner for container security vulnerabilities."""
     
-    def __init__(self, use_mock_data: bool = False, trivy_path: Optional[str] = None):
+    SEVERITIES = ('critical', 'high', 'medium', 'low', 'unknown')
+    TRIVY_SCAN_TIMEOUT = 300
+    MAX_DISPLAYED_VULNERABILITIES = 5
+    
+    def __init__(self, use_mock_data: bool = True, trivy_path: Optional[str] = None):
         """Initialize container security scanner.
         
         Args:
@@ -46,12 +50,7 @@ class ContainerSecurityScanner:
                 'passed': 0,
                 'warnings': 0,
                 'failed': 0,
-                'vulnerabilities': {
-                    'critical': 0,
-                    'high': 0,
-                    'medium': 0,
-                    'low': 0,
-                }
+                'vulnerabilities': {severity: 0 for severity in self.SEVERITIES},
             }
         }
         
@@ -76,7 +75,7 @@ class ContainerSecurityScanner:
         results['summary']['passed'] += 1
     
     def _check_vulnerabilities(self, image: str, results: Dict):
-        """Check for known vulnerabilities using Trivy (mainstream scanner)."""
+        """Check for known vulnerabilities using Trivy."""
         vulnerabilities: List[Dict[str, Any]] = []
         source = 'mock data'
         status = 'passed'
@@ -111,6 +110,8 @@ class ContainerSecurityScanner:
         
         if not self.trivy_path:
             raise RuntimeError('Trivy CLI not found')
+        if not isinstance(image, str) or not image.strip():
+            raise RuntimeError('Image name is required for scanning')
         
         cmd = [
             self.trivy_path,
@@ -122,16 +123,26 @@ class ContainerSecurityScanner:
             '--quiet',
             image,
         ]
-        completed = subprocess.run(
-            cmd, capture_output=True, text=True, check=False
-        )
+        try:
+            completed = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=self.TRIVY_SCAN_TIMEOUT,
+                shell=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError('Trivy scan timed out')
         
         if completed.returncode != 0:
             error_msg = completed.stderr.strip() or 'Trivy scan failed'
             raise RuntimeError(error_msg)
+        if completed.stdout is None or not completed.stdout.strip():
+            raise RuntimeError('Trivy returned empty output')
         
         try:
-            scan_output = json.loads(completed.stdout or "{}")
+            scan_output = json.loads(completed.stdout)
         except json.JSONDecodeError as exc:
             raise RuntimeError(f'Unable to parse Trivy output: {exc}') from exc
         
@@ -141,11 +152,11 @@ class ContainerSecurityScanner:
         """Extract vulnerability information from Trivy JSON output."""
         vulnerabilities: List[Dict[str, Any]] = []
         for result in scan_output.get('Results', []):
-            for vuln in result.get('Vulnerabilities', []) or []:
+            for vuln in result.get('Vulnerabilities') or []:
                 vulnerabilities.append(
                     {
                         'cve': vuln.get('VulnerabilityID'),
-                        'severity': (vuln.get('Severity') or '').lower(),
+                        'severity': self._normalize_severity(vuln.get('Severity')),
                         'package': vuln.get('PkgName'),
                         'version': vuln.get('InstalledVersion'),
                         'fixed_in': vuln.get('FixedVersion') or 'N/A',
@@ -153,6 +164,11 @@ class ContainerSecurityScanner:
                     }
                 )
         return vulnerabilities
+    
+    def _normalize_severity(self, severity: Optional[str]) -> str:
+        """Normalize severity to known buckets."""
+        normalized = (severity or '').lower()
+        return normalized if normalized in self.SEVERITIES else 'unknown'
     
     def _mock_vulnerabilities(self) -> List[Dict[str, Any]]:
         """Provide mock vulnerability data for demo/testing."""
@@ -209,9 +225,8 @@ class ContainerSecurityScanner:
             results['summary']['failed'] += 1
         
         for vuln in vulnerabilities:
-            severity = (vuln.get('severity') or '').lower()
-            if severity in results['summary']['vulnerabilities']:
-                results['summary']['vulnerabilities'][severity] += 1
+            severity_key = self._normalize_severity(vuln.get('severity'))
+            results['summary']['vulnerabilities'][severity_key] += 1
     
     def print_report(self, results: Dict):
         """Print scan results to console."""
@@ -233,13 +248,17 @@ class ContainerSecurityScanner:
             print(f"  High:     {vuln_summary['high']}")
             print(f"  Medium:   {vuln_summary['medium']}")
             print(f"  Low:      {vuln_summary['low']}")
+            print(f"  Unknown:  {vuln_summary['unknown']}")
             
             if results['vulnerabilities']:
                 print(f"\nVulnerability Details:")
-                for vuln in results['vulnerabilities'][:5]:  # Show first 5
-                    print(f"  • {vuln.get('cve')} [{(vuln.get('severity') or '').upper()}]")
-                    print(f"    Package: {vuln.get('package')} {vuln.get('version')}")
-                    print(f"    Fixed in: {vuln.get('fixed_in')}")
+                for vuln in results['vulnerabilities'][: self.MAX_DISPLAYED_VULNERABILITIES]:
+                    severity = self._normalize_severity(vuln.get('severity')).upper()
+                    print(f"  • {vuln.get('cve')} [{severity}]")
+                    package = vuln.get('package') or 'N/A'
+                    version = vuln.get('version') or 'N/A'
+                    print(f"    Package: {package} {version}")
+                    print(f"    Fixed in: {vuln.get('fixed_in') or 'N/A'}")
         
         print(f"\nCheck Details:")
         for check in results['checks']:
@@ -252,5 +271,8 @@ class ContainerSecurityScanner:
     
     def save_report(self, results: Dict, output_path: str):
         """Save scan results to file."""
-        with open(output_path, 'w') as f:
-            json.dump(results, f, indent=2)
+        try:
+            with open(output_path, 'w') as f:
+                json.dump(results, f, indent=2)
+        except OSError as exc:
+            raise RuntimeError(f'Failed to write container scan report: {exc}') from exc

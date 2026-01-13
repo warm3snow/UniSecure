@@ -95,6 +95,9 @@ unisecure scan-container myapp:1.0 --registry registry.example.com
 # Save container scan report (JSON)
 unisecure scan-container nginx:latest --output container-report.json
 
+# Run a real vulnerability scan via Trivy (requires Trivy installed)
+unisecure scan-container nginx:latest --use-trivy --output container-report.json
+
 # Run comprehensive scan (all security checks)
 unisecure scan-all /path/to/project
 ```

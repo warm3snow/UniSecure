@@ -20,14 +20,11 @@ class ContainerSecurityScannerTests(unittest.TestCase):
         scanner = ContainerSecurityScanner(use_mock_data=True)
         results = scanner.scan("example:latest")
 
-        tmp_file = tempfile.NamedTemporaryFile(delete=False)
-        try:
-            scanner.save_report(results, tmp_file.name)
-            with open(tmp_file.name, "r", encoding="utf-8") as f:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp_path = os.path.join(tmp_dir, "container-report.json")
+            scanner.save_report(results, temp_path)
+            with open(temp_path, "r", encoding="utf-8") as f:
                 saved = json.load(f)
-        finally:
-            tmp_file.close()
-            os.unlink(tmp_file.name)
 
         self.assertEqual(saved["image"], "example:latest")
         self.assertIn("checks", saved)
