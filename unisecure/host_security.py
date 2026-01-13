@@ -76,11 +76,12 @@ class HostSecurityScanner:
         # Try to check firewall on different systems
         try:
             if results['os'] == 'Linux':
-                result = subprocess.run(['which', 'ufw'], capture_output=True, timeout=5)
+                result = subprocess.run(['which', 'ufw'], capture_output=True, timeout=5, shell=False)
                 if result.returncode == 0:
                     check['status'] = 'passed'
                     check['message'] = 'Firewall tools detected'
-        except Exception:
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            # If command fails or times out, keep default warning status
             pass
         
         results['checks'].append(check)

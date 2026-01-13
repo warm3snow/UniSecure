@@ -100,8 +100,9 @@ class CodeSecurityScanner:
                                 }
                                 results['issues'].append(issue)
                                 results['summary']['severity_counts'][severity] += 1
-        except Exception as e:
-            pass  # Skip files that can't be read
+        except (UnicodeDecodeError, PermissionError, OSError):
+            # Skip files that can't be read or don't have proper permissions
+            pass
     
     def _get_severity(self, vuln_type: str) -> str:
         """Get severity level for vulnerability type."""

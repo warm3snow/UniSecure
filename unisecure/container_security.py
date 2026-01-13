@@ -5,7 +5,14 @@ from typing import Dict, Any, Optional
 class ContainerSecurityScanner:
     """Scanner for container security vulnerabilities."""
     
-    def __init__(self):
+    def __init__(self, use_mock_data: bool = True):
+        """Initialize container security scanner.
+        
+        Args:
+            use_mock_data: If True, use mock vulnerability data for demonstration.
+                          Set to False in production environments.
+        """
+        self.use_mock_data = use_mock_data
         self.checks = [
             'base_image',
             'vulnerabilities',
@@ -65,16 +72,20 @@ class ContainerSecurityScanner:
     
     def _check_vulnerabilities(self, image: str, results: Dict):
         """Check for known vulnerabilities."""
-        # Simulate finding some vulnerabilities
-        vulnerabilities = [
-            {
-                'cve': 'CVE-2024-0001',
-                'severity': 'medium',
-                'package': 'example-lib',
-                'version': '1.2.3',
-                'fixed_in': '1.2.4',
-            }
-        ]
+        vulnerabilities = []
+        
+        # In production, this would connect to vulnerability databases
+        # For demonstration, use mock data if enabled
+        if self.use_mock_data:
+            vulnerabilities = [
+                {
+                    'cve': 'CVE-2024-0001',
+                    'severity': 'medium',
+                    'package': 'example-lib',
+                    'version': '1.2.3',
+                    'fixed_in': '1.2.4',
+                }
+            ]
         
         check = {
             'check': 'Vulnerability Scan',
