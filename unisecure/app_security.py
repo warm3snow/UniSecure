@@ -1,6 +1,6 @@
 """Application security scanner module."""
 from typing import Any, Dict, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 from requests import Response
@@ -36,7 +36,6 @@ class AppSecurityScanner:
         self.timeout = timeout
         self.user_agent = user_agent or self.DEFAULT_USER_AGENT
         self.session = requests.Session()
-        self.session.max_redirects = self.MAX_REDIRECTS
 
     def scan(self, target: str, ports: Tuple[str, ...] = ()) -> Dict[str, Any]:
         """Scan application for security issues.
@@ -92,16 +91,48 @@ class AppSecurityScanner:
         parsed = urlparse(target)
         if parsed.scheme:
             return target
-        host = target
-        if ":" in host.split("/")[0]:
-            return f"https://{host}"
-        if ports:
-            return f"https://{host}:{ports[0]}"
-        return f"https://{host}"
+
+        parsed_with_scheme = urlparse(f"https://{target}")
+        host = parsed_with_scheme.hostname or target
+        path = parsed_with_scheme.path or ""
+        query = f"?{parsed_with_scheme.query}" if parsed_with_scheme.query else ""
+
+        if host and ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+
+        if parsed_with_scheme.port:
+            host_port = f"{host}:{parsed_with_scheme.port}"
+        elif ports:
+            host_port = f"{host}:{ports[0]}"
+        else:
+            host_port = host
+
+        return f"https://{host_port}{path}{query}"
 
     def _fetch(self, target: str) -> Response:
         headers = {"User-Agent": self.user_agent}
-        return self.session.get(target, timeout=self.timeout, allow_redirects=True, verify=True, headers=headers)
+        url = target
+        redirects = 0
+
+        while True:
+            response = self.session.get(
+                url,
+                timeout=self.timeout,
+                allow_redirects=False,
+                verify=True,
+                headers=headers,
+            )
+
+            if response.is_redirect or response.is_permanent_redirect:
+                location = response.headers.get("Location")
+                if location and redirects < self.MAX_REDIRECTS:
+                    redirects += 1
+                    url = urljoin(url, location)
+                    continue
+                if location:
+                    raise RequestException(f"Redirect limit exceeded after {redirects} hops")
+
+            return response
 
     def _check_ssl_tls(
         self,
@@ -286,7 +317,8 @@ class AppSecurityScanner:
             )
             return
 
-        body = (response.text or "")[: self.MAX_BODY_BYTES].lower()
+        body = (response.text or "")[: self.MAX_BODY_BYTES]
+        body = body.lower()
         error_indicators = (
             "traceback (most recent call last)",
             "stack trace",
