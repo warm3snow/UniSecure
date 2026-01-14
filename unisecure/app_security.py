@@ -130,8 +130,18 @@ class AppSecurityScanner:
                 },
             )
             return
+        if response is None:
+            self._record_check(
+                results,
+                {
+                    "check": "SSL/TLS Configuration",
+                    "status": "warning",
+                    "message": "TLS verification could not be completed: No response received.",
+                },
+            )
+            return
 
-        has_hsts = bool(response.headers.get("Strict-Transport-Security")) if response is not None else False
+        has_hsts = bool(response.headers.get("Strict-Transport-Security"))
         self._record_check(
             results,
             {
@@ -264,7 +274,11 @@ class AppSecurityScanner:
             return
 
         body = response.text.lower()
-        error_indicators = ("traceback", "exception", "stack trace")
+        error_indicators = (
+            "traceback (most recent call last)",
+            "stack trace",
+            "unhandled exception",
+        )
         if any(indicator in body for indicator in error_indicators):
             self._record_check(
                 results,
