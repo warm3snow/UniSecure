@@ -1,6 +1,7 @@
 """Application security scanner module."""
 from typing import Any, Dict, Optional, Tuple
 import ipaddress
+import re
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -25,6 +26,10 @@ class AppSecurityScanner:
     MAX_BODY_BYTES = 8192
     DEFAULT_USER_AGENT = "UniSecure-AppScanner/0.1"
     MAX_REDIRECTS = 3
+    ERROR_INDICATOR_PATTERN = re.compile(
+        r"(traceback \(most recent call last\)|stack trace|unhandled exception|nullpointerexception|fatal error|exception in thread)",
+        re.IGNORECASE,
+    )
 
     def __init__(self, timeout: int = DEFAULT_TIMEOUT, user_agent: Optional[str] = None):
         self.checks = [
@@ -94,7 +99,9 @@ class AppSecurityScanner:
             return target
 
         parsed_with_scheme = urlparse(f"https://{target}")
-        host = parsed_with_scheme.hostname or target
+        host = parsed_with_scheme.hostname or parsed_with_scheme.netloc
+        if not host and target:
+            host = target.split("/")[0]
         path = parsed_with_scheme.path or ""
         query = f"?{parsed_with_scheme.query}" if parsed_with_scheme.query else ""
 
@@ -324,17 +331,8 @@ class AppSecurityScanner:
             )
             return
 
-        body = (response.text or "")[:self.MAX_BODY_BYTES]
-        body = body.lower()
-        error_indicators = (
-            "traceback (most recent call last)",
-            "stack trace",
-            "unhandled exception",
-            "nullpointerexception",
-            "fatal error",
-            "exception in thread",
-        )
-        if any(indicator in body for indicator in error_indicators):
+        body_snippet = (response.text or "")[:self.MAX_BODY_BYTES]
+        if self.ERROR_INDICATOR_PATTERN.search(body_snippet):
             self._record_check(
                 results,
                 {
