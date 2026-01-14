@@ -17,6 +17,19 @@ class HostSecurityScanner:
     MAX_DISPLAYED_PORTS = 8
     GROUP_OTHER_WRITE_MASK = 0o022
     COMMON_REMOTE_PORTS = (22, 80, 443, 3389, 3306, 5432, 8080, 8443)
+    COMMON_SERVICE_NAMES = {
+        22: 'ssh',
+        80: 'http',
+        443: 'https',
+        3389: 'ms-wbt-server',
+        3306: 'mysql',
+        5432: 'postgresql',
+        8080: 'http-alt',
+        8443: 'https-alt',
+    }
+    TTL_NETWORK_DEVICE_THRESHOLD = 200
+    TTL_WINDOWS_THRESHOLD = 128
+    TTL_UNIX_THRESHOLD = 64
 
     def __init__(self, command_timeout: int = DEFAULT_COMMAND_TIMEOUT):
         self.checks = [
@@ -28,6 +41,7 @@ class HostSecurityScanner:
             'security_updates',
         ]
         self.command_timeout = command_timeout
+        self._service_cache: Dict[int, Optional[str]] = {}
     
     def scan(self, quick_mode: bool = False, host: str = 'localhost') -> Dict[str, Any]:
         """Scan host system for security issues.
@@ -90,12 +104,21 @@ class HostSecurityScanner:
                 'message': 'Operating system identified',
             }
         else:
-            check = {
-                'check': 'Operating System',
-                'status': 'warning',
-                'details': f'Remote OS for {host} could not be identified without agent access',
-                'message': 'Remote operating system could not be determined',
-            }
+            remote_guess = self._guess_remote_os(host)
+            if remote_guess:
+                check = {
+                    'check': 'Operating System',
+                    'status': 'passed',
+                    'details': remote_guess,
+                    'message': 'Remote OS fingerprint collected',
+                }
+            else:
+                check = {
+                    'check': 'Operating System',
+                    'status': 'warning',
+                    'details': f'Remote OS for {host} could not be identified without agent access',
+                    'message': 'Remote operating system could not be determined',
+                }
         self._record_check(results, check)
     
     def _check_firewall(self, results: Dict, host: str = 'localhost', is_local: bool = True):
@@ -159,7 +182,12 @@ class HostSecurityScanner:
         status = 'warning' if ports else 'passed'
         message = f"Detected {len(ports)} listening services" if ports else 'No listening services detected'
 
-        displayed_ports = ', '.join(ports[: self.MAX_DISPLAYED_PORTS]) if ports else 'No open ports detected'
+        if ports:
+            displayed_ports = ', '.join(ports[: self.MAX_DISPLAYED_PORTS])
+        else:
+            displayed_ports = 'No open ports detected'
+            if not is_local:
+                displayed_ports += ' on common ports'
         details = f"Listening ports: {displayed_ports}"
 
         check = {
@@ -362,6 +390,8 @@ class HostSecurityScanner:
             }.get(check['status'], '?')
             print(f"  {status_symbol} {check['check']}")
             print(f"     {check['message']}")
+            if check.get('details'):
+                print(f"     Details: {check['details']}")
 
     def _collect_listening_ports(self) -> List[str]:
         """Collect listening TCP/UDP ports using common open-source tools."""
@@ -419,10 +449,58 @@ class HostSecurityScanner:
                 sock.settimeout(timeout)
                 try:
                     if sock.connect_ex((host, port)) == 0:
-                        ports.append(f'{port}/tcp')
+                        ports.append(self._format_port(port))
                 except OSError:
                     continue
         return ports
+
+    def _format_port(self, port: int) -> str:
+        """Return a descriptive port string including service name if available."""
+        if port in self._service_cache:
+            service = self._service_cache[port]
+        else:
+            service = self.COMMON_SERVICE_NAMES.get(port)
+            if service is None:
+                try:
+                    service = socket.getservbyport(port, 'tcp')
+                except OSError:
+                    service = None
+            self._service_cache[port] = service
+        return f"{port}/tcp" + (f" ({service})" if service else "")
+
+    def _guess_remote_os(self, host: str) -> Optional[str]:
+        """Attempt basic remote OS fingerprinting using ping TTL heuristic."""
+        if not self._command_exists('ping'):
+            return None
+
+        try:
+            completed = self._run_command(self._build_ping_command(host))
+        except subprocess.TimeoutExpired:
+            return None
+        if completed.returncode != 0 or not completed.stdout:
+            return None
+
+        match = re.search(r'ttl[=:\s]+(\d+)', completed.stdout, re.IGNORECASE)
+        if not match:
+            return None
+
+        ttl = int(match.group(1))
+        if ttl >= self.TTL_NETWORK_DEVICE_THRESHOLD:
+            return f'Network device or BSD-like (TTL {ttl})'
+        elif ttl >= self.TTL_WINDOWS_THRESHOLD:
+            return f'Windows-like (TTL {ttl})'
+        elif ttl >= self.TTL_UNIX_THRESHOLD:
+            return f'Linux/Unix-like (TTL {ttl})'
+        else:
+            return f'Unknown OS (TTL {ttl})'
+
+    def _build_ping_command(self, host: str) -> List[str]:
+        """Construct ping command arguments for the current platform."""
+        timeout_seconds = max(1, self.command_timeout)
+        if platform.system().lower().startswith('win'):
+            timeout_ms = min(timeout_seconds * 1000, 60000)
+            return ['ping', '-n', '1', '-w', str(timeout_ms), host]
+        return ['ping', '-c', '1', '-W', str(timeout_seconds), host]
 
     def _detect_package_manager(self) -> Optional[str]:
         """Detect available package manager."""
