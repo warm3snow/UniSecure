@@ -1,5 +1,6 @@
 """Application security scanner module."""
 from typing import Any, Dict, Optional, Tuple
+import ipaddress
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -97,7 +98,12 @@ class AppSecurityScanner:
         path = parsed_with_scheme.path or ""
         query = f"?{parsed_with_scheme.query}" if parsed_with_scheme.query else ""
 
-        if host and ":" in host and not host.startswith("["):
+        try:
+            host_is_ipv6 = isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address)
+        except ValueError:
+            host_is_ipv6 = False
+
+        if host_is_ipv6 and host and not host.startswith("["):
             host = f"[{host}]"
 
         if parsed_with_scheme.port:
@@ -123,14 +129,15 @@ class AppSecurityScanner:
                 headers=headers,
             )
 
-            if response.is_redirect or response.is_permanent_redirect:
-                location = response.headers.get("Location")
-                if location and redirects < self.MAX_REDIRECTS:
-                    redirects += 1
-                    url = urljoin(url, location)
-                    continue
-                if location:
+            location = response.headers.get("Location")
+            is_redirect = 300 <= response.status_code < 400 and location
+
+            if is_redirect:
+                if redirects >= self.MAX_REDIRECTS:
                     raise RequestException(f"Redirect limit exceeded after {redirects} hops")
+                redirects += 1
+                url = urljoin(url, location)
+                continue
 
             return response
 
