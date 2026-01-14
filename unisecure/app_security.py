@@ -19,8 +19,12 @@ class AppSecurityScanner:
         "Referrer-Policy",
         "Permissions-Policy",
     )
+    HTTP_UNAUTHORIZED = 401
+    HTTP_FORBIDDEN = 403
+    MAX_BODY_BYTES = 8192
+    DEFAULT_USER_AGENT = "UniSecure-AppScanner/0.1"
 
-    def __init__(self, timeout: int = DEFAULT_TIMEOUT):
+    def __init__(self, timeout: int = DEFAULT_TIMEOUT, user_agent: Optional[str] = None):
         self.checks = [
             "ssl_tls_configuration",
             "security_headers",
@@ -29,6 +33,7 @@ class AppSecurityScanner:
             "input_validation",
         ]
         self.timeout = timeout
+        self.user_agent = user_agent or self.DEFAULT_USER_AGENT
 
     def scan(self, target: str, ports: Tuple[str, ...] = ()) -> Dict[str, Any]:
         """Scan application for security issues.
@@ -84,11 +89,11 @@ class AppSecurityScanner:
         parsed = urlparse(target)
         if parsed.scheme:
             return target
-        preferred_scheme = "https" if ("443" in ports or not ports) else "http"
-        return f"{preferred_scheme}://{target}"
+        return f"https://{target}"
 
     def _fetch(self, target: str) -> Response:
-        return requests.get(target, timeout=self.timeout, allow_redirects=True)
+        headers = {"User-Agent": self.user_agent}
+        return requests.get(target, timeout=self.timeout, allow_redirects=True, verify=True, headers=headers)
 
     def _check_ssl_tls(
         self,
@@ -195,7 +200,7 @@ class AppSecurityScanner:
             )
             return
 
-        if response.status_code in (401, 403):
+        if response.status_code in (self.HTTP_UNAUTHORIZED, self.HTTP_FORBIDDEN):
             self._record_check(
                 results,
                 {
@@ -273,7 +278,7 @@ class AppSecurityScanner:
             )
             return
 
-        body = response.text.lower()
+        body = (response.text or "")[: self.MAX_BODY_BYTES].lower()
         error_indicators = (
             "traceback (most recent call last)",
             "stack trace",
