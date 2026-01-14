@@ -27,7 +27,7 @@ class AppSecurityScanner:
     DEFAULT_USER_AGENT = "UniSecure-AppScanner/0.1"
     MAX_REDIRECTS = 3
     ERROR_INDICATOR_PATTERN = re.compile(
-        r"(traceback \(most recent call last\)|stack trace|unhandled exception|nullpointerexception|fatal error|exception in thread)",
+        r"(traceback \\\(most recent call last\\\)|stack trace|unhandled exception|nullpointerexception|fatal error|exception in thread)",
         re.IGNORECASE,
     )
 
@@ -105,10 +105,12 @@ class AppSecurityScanner:
         path = parsed_with_scheme.path or ""
         query = f"?{parsed_with_scheme.query}" if parsed_with_scheme.query else ""
 
-        try:
-            needs_ipv6_brackets = isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address)
-        except ValueError:
-            needs_ipv6_brackets = False
+        needs_ipv6_brackets = False
+        if host:
+            try:
+                needs_ipv6_brackets = isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address)
+            except ValueError:
+                needs_ipv6_brackets = False
 
         if needs_ipv6_brackets and host and not host.startswith("["):
             host = f"[{host}]"
