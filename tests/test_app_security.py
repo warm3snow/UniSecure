@@ -15,33 +15,28 @@ def build_response(status_code=200, headers=None, body="OK"):
 
 
 class AppSecurityScannerTests(unittest.TestCase):
-    @patch("unisecure.app_security.requests.get")
-    def test_scan_reports_missing_security_headers(self, mock_get):
-        mock_get.return_value = build_response(headers={"Content-Type": "text/html"})
-
+    def test_scan_reports_missing_security_headers(self):
         scanner = AppSecurityScanner()
-        results = scanner.scan("https://example.com")
+        with patch.object(scanner, "_fetch", return_value=build_response(headers={"Content-Type": "text/html"})):
+            results = scanner.scan("https://example.com")
 
         header_check = next(check for check in results["issues"] if check["check"] == "Security Headers")
         self.assertEqual(header_check["status"], "warning")
         self.assertIn("Missing security headers", header_check["message"])
-        self.assertEqual(results["summary"]["total_checks"], 5)
+        self.assertEqual(results["summary"]["total_checks"], len(scanner.checks))
         self.assertGreaterEqual(results["summary"]["warnings"], 1)
 
-    @patch("unisecure.app_security.requests.get")
-    def test_scan_handles_ssl_errors(self, mock_get):
-        mock_get.side_effect = requests.exceptions.SSLError("certificate verify failed")
-
+    def test_scan_handles_ssl_errors(self):
         scanner = AppSecurityScanner()
-        results = scanner.scan("https://bad.example")
+        with patch.object(scanner, "_fetch", side_effect=requests.exceptions.SSLError("certificate verify failed")):
+            results = scanner.scan("https://bad.example")
 
         tls_check = next(check for check in results["issues"] if check["check"] == "SSL/TLS Configuration")
         self.assertEqual(tls_check["status"], "failed")
         self.assertIn("handshake failed", tls_check["message"].lower())
         self.assertEqual(results["summary"]["failed"], 1)
 
-    @patch("unisecure.app_security.requests.get")
-    def test_scan_detects_authentication_challenge(self, mock_get):
+    def test_scan_detects_authentication_challenge(self):
         response = build_response(
             status_code=401,
             headers={
@@ -56,16 +51,18 @@ class AppSecurityScannerTests(unittest.TestCase):
             },
             body="Auth required",
         )
-        mock_get.return_value = response
 
         scanner = AppSecurityScanner()
-        results = scanner.scan("https://secure.example")
+        with patch.object(scanner, "_fetch", return_value=response):
+            results = scanner.scan("https://secure.example")
 
         auth_check = next(check for check in results["issues"] if check["check"] == "Authentication")
         self.assertEqual(auth_check["status"], "passed")
+        total_checks = len(scanner.checks)
         self.assertEqual(results["summary"]["warnings"], 0)
         self.assertEqual(results["summary"]["failed"], 0)
-        self.assertEqual(results["summary"]["passed"], 5)
+        self.assertEqual(results["summary"]["passed"], total_checks)
+        self.assertEqual(results["summary"]["total_checks"], total_checks)
 
 
 if __name__ == "__main__":

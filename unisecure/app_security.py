@@ -23,6 +23,7 @@ class AppSecurityScanner:
     HTTP_FORBIDDEN = 403
     MAX_BODY_BYTES = 8192
     DEFAULT_USER_AGENT = "UniSecure-AppScanner/0.1"
+    MAX_REDIRECTS = 3
 
     def __init__(self, timeout: int = DEFAULT_TIMEOUT, user_agent: Optional[str] = None):
         self.checks = [
@@ -34,6 +35,8 @@ class AppSecurityScanner:
         ]
         self.timeout = timeout
         self.user_agent = user_agent or self.DEFAULT_USER_AGENT
+        self.session = requests.Session()
+        self.session.max_redirects = self.MAX_REDIRECTS
 
     def scan(self, target: str, ports: Tuple[str, ...] = ()) -> Dict[str, Any]:
         """Scan application for security issues.
@@ -89,11 +92,16 @@ class AppSecurityScanner:
         parsed = urlparse(target)
         if parsed.scheme:
             return target
-        return f"https://{target}"
+        host = target
+        if ":" in host.split("/")[0]:
+            return f"https://{host}"
+        if ports:
+            return f"https://{host}:{ports[0]}"
+        return f"https://{host}"
 
     def _fetch(self, target: str) -> Response:
         headers = {"User-Agent": self.user_agent}
-        return requests.get(target, timeout=self.timeout, allow_redirects=True, verify=True, headers=headers)
+        return self.session.get(target, timeout=self.timeout, allow_redirects=True, verify=True, headers=headers)
 
     def _check_ssl_tls(
         self,
@@ -283,6 +291,9 @@ class AppSecurityScanner:
             "traceback (most recent call last)",
             "stack trace",
             "unhandled exception",
+            "nullpointerexception",
+            "fatal error",
+            "exception in thread",
         )
         if any(indicator in body for indicator in error_indicators):
             self._record_check(
