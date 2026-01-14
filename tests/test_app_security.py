@@ -1,4 +1,5 @@
 import unittest
+from typing import Dict, Optional
 from unittest.mock import Mock, patch
 
 import requests
@@ -6,7 +7,7 @@ import requests
 from unisecure.app_security import AppSecurityScanner
 
 
-def build_response(status_code=200, headers=None, body="OK"):
+def build_response(status_code: int = 200, headers: Optional[Dict[str, str]] = None, body: str = "OK") -> Mock:
     response = Mock(spec=requests.Response)
     response.status_code = status_code
     response.headers = headers or {}

@@ -99,11 +99,11 @@ class AppSecurityScanner:
         query = f"?{parsed_with_scheme.query}" if parsed_with_scheme.query else ""
 
         try:
-            host_is_ipv6 = isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address)
+            needs_ipv6_brackets = isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address)
         except ValueError:
-            host_is_ipv6 = False
+            needs_ipv6_brackets = False
 
-        if host_is_ipv6 and host and not host.startswith("["):
+        if needs_ipv6_brackets and host and not host.startswith("["):
             host = f"[{host}]"
 
         if parsed_with_scheme.port:
@@ -134,7 +134,7 @@ class AppSecurityScanner:
 
             if is_redirect:
                 if redirects >= self.MAX_REDIRECTS:
-                    raise RequestException(f"Redirect limit exceeded after {redirects} hops")
+                    raise RequestException(f"Redirect limit exceeded after {self.MAX_REDIRECTS} hops")
                 redirects += 1
                 url = urljoin(url, location)
                 continue
@@ -324,7 +324,7 @@ class AppSecurityScanner:
             )
             return
 
-        body = (response.text or "")[: self.MAX_BODY_BYTES]
+        body = (response.text or "")[:self.MAX_BODY_BYTES]
         body = body.lower()
         error_indicators = (
             "traceback (most recent call last)",
